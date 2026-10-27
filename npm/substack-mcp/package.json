@@ -1,0 +1,15 @@
+{
+  "name": "@gabriellsales/substack-mcp",
+  "version": "0.0.0",
+  "description": "MCP server for Substack: drafts, publishing, scheduling, images and Notes from Claude Code, Codex, OpenCode, Gemini CLI, Cursor and more. Single native binary. Unofficial.",
+  "keywords": ["mcp", "model-context-protocol", "substack", "claude", "codex", "opencode", "gemini", "cursor", "newsletter"],
+  "homepage": "https://github.com/gabriellsalesx/substack-mcp#readme",
+  "bugs": "https://github.com/gabriellsalesx/substack-mcp/issues",
+  "repository": { "type": "git", "url": "git+https://github.com/gabriellsalesx/substack-mcp.git" },
+  "license": "MIT",
+  "author": "Gabriell Sales",
+  "bin": { "substack-mcp": "bin/substack-mcp.js" },
+  "files": ["bin", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "optionalDependencies": {}
+}
