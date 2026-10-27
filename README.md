@@ -1,212 +1,89 @@
 # substack-mcp
 
-Servidor MCP para Substack, escrito em Go. É um binário único, sem Python, Node ou navegador embutido, e funciona em qualquer cliente MCP via stdio: Claude Code, Codex, OpenCode, Gemini CLI, Cursor, Claude Desktop e outros.
+An MCP server for Substack, written in Go. It is a single binary with no Python, Node or bundled browser, and it works with any stdio MCP client: Claude Code, Codex, OpenCode, Gemini CLI, Cursor, Claude Desktop and others.
 
-Com ele você pede ao seu agente para escrever rascunhos em Markdown (com formatação e imagens de verdade), revisar, agendar, publicar, ler posts antigos e postar Notes.
+Ask your agent to write drafts in Markdown (with real formatting and images), revise them, schedule, publish, read past posts and post Notes.
 
-> Projeto não oficial, sem afiliação com a Substack Inc. Ele usa a mesma API interna que o site do Substack usa, que pode mudar sem aviso.
+> Unofficial; not affiliated with Substack Inc. It uses the same internal API as the Substack website, which may change without notice.
 
-[English version](README.en.md)
+[Versão em português](README.pt-BR.md)
 
-## Instalação
+## Install
 
-Escolha um caminho. Nenhum deles exige Go.
-
-**Com Node.js (npx), sem instalar nada.** Se você já usa Claude Code, Codex ou Gemini CLI, provavelmente já tem Node. O primeiro uso baixa o binário certo para o seu sistema:
+Pick one; none needs Go.
 
 ```bash
+# With Node.js: nothing to install, the first run fetches the right binary
 npx -y @gabriellsales/substack-mcp login
-```
 
-**Sem Node, com o script de instalação.** Baixa o binário do [GitHub Releases](https://github.com/gabriellsalesx/substack-mcp/releases), confere o checksum e instala em `~/.local/bin` (Linux e macOS) ou em `%LOCALAPPDATA%\Programs\substack-mcp` (Windows):
-
-```bash
+# Without Node: download from GitHub Releases, verify the checksum, install to ~/.local/bin
 curl -fsSL https://raw.githubusercontent.com/gabriellsalesx/substack-mcp/main/install.sh | sh
 ```
 
 ```powershell
+# Windows, without Node
 irm https://raw.githubusercontent.com/gabriellsalesx/substack-mcp/main/install.ps1 | iex
 ```
 
-Depois, `substack-mcp login`.
+Also: `npm i -g @gabriellsales/substack-mcp`, `pnpm add -g @gabriellsales/substack-mcp`, `go install github.com/gabriellsalesx/substack-mcp@latest`, or a binary from [Releases](https://github.com/gabriellsalesx/substack-mcp/releases).
 
-**Outras formas:**
-
-```bash
-npm install -g @gabriellsales/substack-mcp                  # ou: pnpm add -g @gabriellsales/substack-mcp
-go install github.com/gabriellsalesx/substack-mcp@latest    # com Go 1.26+
-```
-
-Ou baixe o arquivo da sua plataforma em [Releases](https://github.com/gabriellsalesx/substack-mcp/releases) e coloque o `substack-mcp` no `PATH`.
-
-## Login
+## Log in
 
 ```bash
-npx -y @gabriellsales/substack-mcp login
+npx -y @gabriellsales/substack-mcp login   # opens Substack in your Chrome/Chromium/Brave/Edge; sign in, done
+substack-mcp login --cookie                # no browser (servers, Firefox-only): paste the substack.sid cookie
+substack-mcp status                        # after npm i -g (or prefix with npx -y @gabriellsales/substack-mcp)
+substack-mcp logout
 ```
 
-Abre o Substack numa janela limpa do seu Chrome, Chromium, Brave ou Edge. Você entra normalmente (código por e-mail ou senha) e, assim que o login termina, a sessão é capturada e a janela fecha sozinha. Nada de DevTools nem de copiar cookie. A janela usa um perfil temporário, apagado ao final; o seu perfil de sempre não é tocado.
+`login` uses a temporary browser profile, captures the session as soon as you are signed in and closes the window by itself. Set `SUBSTACK_BROWSER` if your browser is not on `PATH`. The session is stored in your OS config dir (`credentials.json`, mode 600); your password is never stored. In CI, set `SUBSTACK_SID` instead.
 
-Se o navegador não estiver no `PATH`, aponte o caminho com `SUBSTACK_BROWSER=/caminho/do/navegador`. Em servidor sem tela, ou se você usa só Firefox (que não permite esse controle), dá para colar o cookie `substack.sid` à mão:
+## Client setup
 
 ```bash
-substack-mcp login --cookie
-pass show substack | substack-mcp login --cookie   # também aceita pipe
+claude mcp add -s user substack -- npx -y @gabriellsales/substack-mcp   # Claude Code
+gemini mcp add -s user substack npx -y @gabriellsales/substack-mcp      # Gemini CLI
 ```
 
-A sessão fica em `~/.config/substack-mcp/credentials.json` (Linux), com permissão `600`. A senha nunca é pedida nem salva. Outros comandos:
-
-```bash
-substack-mcp status   # conta, publicações e publicação padrão
-substack-mcp logout   # apaga a sessão local (a do navegador continua)
-```
-
-Em CI ou contêiner, dá para pular o login e passar a sessão por variável: `SUBSTACK_SID=s%3A...`.
-
-## Configuração nos clientes
-
-Os exemplos usam `npx`, que funciona sem mexer no `PATH`. Se você instalou pelo script, pelo `npm -g` ou pelo `go install`, troque `npx -y @gabriellsales/substack-mcp` por `substack-mcp` (ou pelo caminho completo que `which substack-mcp` mostrar, se o cliente não achar o comando). A variável `SUBSTACK_PUBLICATION` é opcional: sem ela, vale a publicação escolhida no login.
-
-**Claude Code**
-
-```bash
-claude mcp add -s user substack -- npx -y @gabriellsales/substack-mcp
-```
-
-**Codex CLI** (`~/.codex/config.toml`)
+Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.substack]
 command = "npx"
 args = ["-y", "@gabriellsales/substack-mcp"]
-# Pede aprovação para tudo que não é somente leitura.
 default_tools_approval_mode = "writes"
 ```
 
-**OpenCode** (`opencode.json`)
+OpenCode (`opencode.json`):
 
 ```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "substack": { "type": "local", "command": ["npx", "-y", "@gabriellsales/substack-mcp"], "enabled": true }
-  }
-}
+{ "mcp": { "substack": { "type": "local", "command": ["npx", "-y", "@gabriellsales/substack-mcp"], "enabled": true } } }
 ```
 
-**Gemini CLI**
-
-```bash
-gemini mcp add -s user substack npx -y @gabriellsales/substack-mcp
-```
-
-**Cursor** (`~/.cursor/mcp.json`) e **Claude Desktop** (`claude_desktop_config.json`)
+Cursor / Claude Desktop:
 
 ```json
-{
-  "mcpServers": {
-    "substack": {
-      "command": "npx",
-      "args": ["-y", "@gabriellsales/substack-mcp"]
-    }
-  }
-}
+{ "mcpServers": { "substack": { "command": "npx", "args": ["-y", "@gabriellsales/substack-mcp"] } } }
 ```
 
-No Windows, se o cliente não encontrar o `npx`, use `"command": "cmd"` e `"args": ["/c", "npx", "-y", "@gabriellsales/substack-mcp"]`.
+On Windows, if `npx` is not found, use `"command": "cmd", "args": ["/c", "npx", "-y", "@gabriellsales/substack-mcp"]`.
 
-Reinicie o cliente depois de configurar e peça algo como: *"liste meus últimos rascunhos no Substack"*.
+## Tools
 
-### Comandos
+`list_posts`, `get_post`, `create_draft`, `update_draft`, `duplicate_post`, `publish_post`, `delete_draft`, `upload_image`, `get_publication`, `create_note`, `list_scheduled_notes`, `delete_note`, `create_community_post`.
 
-| Comando | O que faz |
-| --- | --- |
-| `substack-mcp` | Roda o servidor MCP via stdio (é o que o cliente chama). |
-| `substack-mcp login` | Conecta sua conta pelo navegador. `--cookie` cola o cookie à mão; `--publication` define a publicação padrão. |
-| `substack-mcp status` | Mostra a conta, as publicações e a padrão. |
-| `substack-mcp logout` | Apaga a sessão salva neste computador. |
-| `substack-mcp version` | Mostra a versão. |
+Tools that reach readers or delete data (`publish_post`, `delete_draft`, `create_note`, `delete_note`, `create_community_post`) return a preview unless called with `confirm: true`, so the agent has to show you what will happen first. `send_email` defaults to `false`. Every tool takes an optional `publication` for accounts with several newsletters.
 
-Com `npx`, prefixe com `npx -y @gabriellsales/substack-mcp`, por exemplo `npx -y @gabriellsales/substack-mcp status`.
+Markdown support: headings, bold, italic, strikethrough, inline code, links, nested lists, quotes, fenced code, rules, images with captions (local files and URLs are uploaded to Substack's CDN), `<!-- paywall -->` to mark the paywall, and `<!-- subscribe -->` for the subscribe button (copied from your latest post that has one). Tables become code blocks.
 
-## Ferramentas
+## Environment
 
-| Ferramenta | O que faz |
-| --- | --- |
-| `list_posts` | Lista rascunhos, agendados ou publicados, com ids e links. |
-| `get_post` | Lê um post inteiro como Markdown. |
-| `create_draft` | Cria rascunho a partir de Markdown e sobe as imagens locais. |
-| `update_draft` | Altera título, subtítulo, corpo, público ou seção. |
-| `duplicate_post` | Copia um post, com formatação, para um novo rascunho. |
-| `publish_post` | Publica agora ou agenda, com a checagem do editor na prévia. Num post já publicado, leva as edições ao ar e pode enviá-lo por e-mail. Exige confirmação. |
-| `delete_draft` | Apaga um rascunho ou cancela um agendado. Exige confirmação. |
-| `upload_image` | Sobe uma imagem para o CDN do Substack. |
-| `get_publication` | Publicação, assinantes, visualizações, seções e outras publicações da conta. |
-| `create_note` | Posta ou agenda uma Note. Exige confirmação. |
-| `list_scheduled_notes` | Lista Notes agendadas. |
-| `delete_note` | Cancela ou apaga uma Note. Exige confirmação. |
-| `create_community_post` | Abre conversa no chat de assinantes. Exige confirmação. |
+`SUBSTACK_PUBLICATION` (default publication), `SUBSTACK_SID` / `SUBSTACK_COOKIE` (session override), `SUBSTACK_USER_AGENT`, `SUBSTACK_BROWSER`, `SUBSTACK_MCP_CONFIG_DIR`, `SUBSTACK_DEBUG=1`.
 
-Toda ferramenta aceita `publication` opcional (URL, domínio ou subdomínio) para quem tem mais de uma publicação.
+## Author
 
-### Confirmação antes de publicar
+Created and maintained by **Gabriell Sales**: [GitHub](https://github.com/gabriellsalesx) · [Substack](https://gabriellsales.substack.com). Issues and pull requests are welcome.
 
-As ferramentas que chegam até leitores ou apagam algo não agem na primeira chamada. Sem `confirm: true`, elas devolvem uma prévia do que fariam (título, público, quantos assinantes recebem o e-mail) e nada muda. O agente mostra a prévia, você aprova e ele chama de novo com `confirm: true`. Além disso, as ferramentas trazem as anotações MCP (`readOnlyHint`, `destructiveHint`), que clientes como Codex e Claude Code usam para pedir permissão.
+## License
 
-`send_email` é `false` por padrão. Publicar não dispara e-mail para a base a menos que você peça.
-
-### Markdown suportado
-
-Títulos, negrito, itálico, tachado, código inline, links, listas (inclusive aninhadas), citações, blocos de código com linguagem, linha horizontal e imagens com legenda (`![alt](foto.png "legenda")`). Imagens locais ou externas são enviadas para o CDN do Substack automaticamente. Uma linha `<!-- paywall -->` marca onde começa o conteúdo pago, e `<!-- subscribe -->` insere o botão de inscrição com o mesmo texto dos seus posts anteriores. Tabelas viram bloco de código, porque o Substack não tem tabela.
-
-Um `# Título` no início do texto, igual ao título do post, é removido para não aparecer duas vezes.
-
-## Variáveis de ambiente
-
-| Variável | Uso |
-| --- | --- |
-| `SUBSTACK_PUBLICATION` | Publicação padrão (URL, domínio ou subdomínio). `SUBSTACK_PUBLICATION_URL` também vale. |
-| `SUBSTACK_SID` | Valor do cookie de sessão; tem prioridade sobre o login salvo. |
-| `SUBSTACK_COOKIE` | Cabeçalho `Cookie` completo; tem prioridade sobre `SUBSTACK_SID`. |
-| `SUBSTACK_USER_AGENT` | User-Agent das requisições. |
-| `SUBSTACK_BROWSER` | Caminho do navegador usado no `login`. |
-| `SUBSTACK_MCP_CONFIG_DIR` | Pasta do `credentials.json`. |
-| `SUBSTACK_DEBUG=1` | Loga as chamadas HTTP no stderr (sem cookies). |
-
-## Limitações conhecidas
-
-- A API é não oficial. Se o Substack mudar um endpoint, a ferramenta correspondente pode falhar até uma nova versão.
-- O login automático precisa de um navegador baseado em Chromium; sem ele, use `--cookie`.
-- Publicações com domínio próprio são acessadas pelo endereço `*.substack.com`, que é onde vale o cookie de sessão.
-- Editar um post já publicado altera a versão pendente; para ir ao ar, chame `publish_post` (com `send_email: true`, ele também é enviado por e-mail aos assinantes).
-- A contagem de assinantes não aparece para todas as contas.
-
-## Desenvolvimento
-
-```bash
-go test ./...
-go build -o substack-mcp .
-```
-
-O pacote `internal/prosemirror` converte Markdown para o formato de documento do Substack e de volta; `internal/substack` é o cliente HTTP; `internal/browser` faz o login pelo navegador; `internal/server` registra as ferramentas MCP com o [SDK oficial em Go](https://github.com/modelcontextprotocol/go-sdk).
-
-### Publicar uma versão
-
-```bash
-git tag v0.2.0 && git push origin v0.2.0
-```
-
-O workflow `release` compila os binários com o GoReleaser, cria o Release no GitHub com `checksums.txt` e publica no npm o pacote principal mais um pacote por plataforma (`npm/build.mjs` e `npm/publish.mjs`). O CI roda testes em Linux, macOS e Windows, `golangci-lint` e `govulncheck`. Para testar localmente: `node npm/build.mjs 0.2.0 && node npm/publish.mjs --dry-run`.
-
-## Autor
-
-Criado e mantido por **Gabriell Sales**.
-
-- GitHub: [@gabriellsalesx](https://github.com/gabriellsalesx)
-- Substack: [GS Lab](https://gabriellsales.substack.com)
-
-Contribuições são bem-vindas: abra uma issue ou um pull request.
-
-## Licença
-
-MIT. Veja [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
