@@ -209,6 +209,15 @@ func (c *Client) Publish(ctx context.Context, pub Publication, id int64, sendEma
 	return p, err
 }
 
+// SendPublished emails an already published post to its audience, like the
+// editor's "Send to subscribers".
+func (c *Client) SendPublished(ctx context.Context, pub Publication, id int64) error {
+	return c.do(ctx, request{
+		Method: "POST", URL: c.pubAPI(pub) + "/drafts/" + strconv.FormatInt(id, 10) + "/publish",
+		Body: map[string]any{"send": true, "only_send": true},
+	}, nil)
+}
+
 // Prepublish returns the problems the Substack editor would flag before publishing.
 func (c *Client) Prepublish(ctx context.Context, pub Publication, id int64) (errs, suggestions []any, err error) {
 	var resp struct {

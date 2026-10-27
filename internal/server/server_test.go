@@ -17,9 +17,11 @@ import (
 
 // fakeSubstack records requests and answers like the parts of Substack we use.
 type fakeSubstack struct {
-	mu     sync.Mutex
-	calls  []string
-	bodies map[string]map[string]any
+	mu        sync.Mutex
+	calls     []string
+	bodies    map[string]map[string]any
+	publishes []map[string]any
+	live      bool
 }
 
 func (f *fakeSubstack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -29,7 +31,11 @@ func (f *fakeSubstack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var m map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		f.bodies[r.Method+" "+r.URL.Path] = m
+		if strings.HasSuffix(r.URL.Path, "/publish") {
+			f.publishes = append(f.publishes, m)
+		}
 	}
+	live := f.live
 	f.mu.Unlock()
 	if ck, err := r.Cookie("substack.sid"); err != nil || ck.Value != "s%3Atest" {
 		w.WriteHeader(401)
@@ -45,6 +51,10 @@ func (f *fakeSubstack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "POST /pub/drafts":
 		_, _ = w.Write([]byte(`{"id":101,"draft_title":"Hello","post_date":null}`))
 	case "GET /pub/drafts/101":
+		if live {
+			_, _ = w.Write([]byte(`{"id":101,"title":"Hello","slug":"hello","is_published":true,"post_date":"2026-10-26T10:00:00Z","draft_body":""}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"id":101,"draft_title":"Hello","audience":"everyone","post_date":null,
 			"draft_body":"{\"type\":\"doc\",\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Hi \"},{\"type\":\"text\",\"text\":\"there\",\"marks\":[{\"type\":\"strong\"}]}]}]}"}`))
 	case "GET /pub/post_management/drafts":
@@ -224,5 +234,25 @@ func TestParseID(t *testing.T) {
 		if got, err := parseID(in, "id"); err == nil {
 			t.Errorf("parseID(%q) = %d, want error", in, got)
 		}
+	}
+}
+
+func TestResendPublishedPost(t *testing.T) {
+	cs, fake := connect(t)
+	fake.mu.Lock()
+	fake.live = true
+	fake.mu.Unlock()
+	out, isErr := call(t, cs, "publish_post", map[string]any{"post_id": "101", "send_email": true})
+	if isErr || !strings.Contains(out["action"].(string), "email it to subscribers") {
+		t.Fatalf("preview = %v", out)
+	}
+	if _, isErr = call(t, cs, "publish_post", map[string]any{"post_id": "101", "send_email": true, "confirm": true}); isErr {
+		t.Fatal("publish failed")
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	sends := fake.publishes
+	if len(sends) != 2 || sends[0]["send"] != false || sends[1]["only_send"] != true {
+		t.Errorf("want an update without email, then only_send; got %v", sends)
 	}
 }

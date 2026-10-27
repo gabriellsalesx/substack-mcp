@@ -183,7 +183,7 @@ func (s *Server) register(ms *mcp.Server) {
 
 	mcp.AddTool(ms, &mcp.Tool{
 		Name:        "update_draft",
-		Description: "Change the title, subtitle, body, audience or section of a draft. Only the fields you pass change; content replaces the whole body. For an already published post this edits its pending version; publish_post with send_email=false makes the edit live.",
+		Description: "Change the title, subtitle, body, audience or section of a draft. Only the fields you pass change; content replaces the whole body. For an already published post this edits its pending version; publish_post makes the edit live.",
 		Annotations: ann("Update draft", false, true, true),
 	}, s.updateDraft)
 
@@ -195,7 +195,7 @@ func (s *Server) register(ms *mcp.Server) {
 
 	mcp.AddTool(ms, &mcp.Tool{
 		Name:        "publish_post",
-		Description: "Publish a draft now or schedule it. Public and possibly emailed to subscribers, so call without confirm first, show the preview to the user, and repeat with confirm=true once they approve.",
+		Description: "Publish a draft now or schedule it. On an already published post, pushes its pending edits live, and with send_email=true emails it to subscribers. Public, so call without confirm first, show the preview to the user, and repeat with confirm=true once they approve.",
 		Annotations: ann("Publish post", false, true, false),
 	}, s.publishPost)
 
@@ -442,7 +442,7 @@ func (s *Server) updateDraft(ctx context.Context, _ *mcp.CallToolRequest, in upd
 		Note           string `json:"note,omitempty"`
 	}{postSummary: summarize(pub, p), ImagesUploaded: images}
 	if cur.Status() == "published" {
-		out.Note = "This post is live. The edit is saved as pending; call publish_post with send_email=false to make it public."
+		out.Note = "This post is live. The edit is saved as pending; call publish_post to make it public (send_email=true also emails it to subscribers)."
 	}
 	return nil, out, nil
 }
@@ -500,6 +500,10 @@ func (s *Server) publishPost(ctx context.Context, _ *mcp.CallToolRequest, in pub
 	if err != nil {
 		return nil, nil, err
 	}
+	live := p.Status() == "published"
+	if live && !at.IsZero() {
+		return nil, nil, fmt.Errorf("post %d is already published; it cannot be scheduled", id)
+	}
 	if !in.Confirm {
 		d := map[string]any{
 			"post":        summarize(pub, p),
@@ -515,8 +519,13 @@ func (s *Server) publishPost(ctx context.Context, _ *mcp.CallToolRequest, in pub
 			}
 		}
 		action := "Publish now"
-		if !at.IsZero() {
+		switch {
+		case !at.IsZero():
 			action = "Schedule for " + at.Format(time.RFC3339)
+		case live && in.SendEmail:
+			action = "Update the live post with its pending edits and email it to subscribers"
+		case live:
+			action = "Update the live post with its pending edits (no email)"
 		}
 		if in.SendEmail {
 			if st, err := c.Stats(ctx, pub); err == nil {
@@ -533,9 +542,16 @@ func (s *Server) publishPost(ctx context.Context, _ *mcp.CallToolRequest, in pub
 		out.Status, out.PostDate = "scheduled", at.Format(time.RFC3339)
 		return nil, out, nil
 	}
-	pp, err := c.Publish(ctx, pub, id, in.SendEmail)
+	// A live post is updated without email first; the email, if asked, is a
+	// separate "send to subscribers" so it never goes out twice.
+	pp, err := c.Publish(ctx, pub, id, in.SendEmail && !live)
 	if err != nil {
 		return nil, nil, err
+	}
+	if live && in.SendEmail {
+		if err := c.SendPublished(ctx, pub, id); err != nil {
+			return nil, nil, fmt.Errorf("post updated, but sending the email failed: %w", err)
+		}
 	}
 	if pp.ID == 0 {
 		pp = p

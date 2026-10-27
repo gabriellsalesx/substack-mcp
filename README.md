@@ -138,7 +138,7 @@ Com `npx`, prefixe com `npx -y @gabriellsales/substack-mcp`, por exemplo `npx -y
 | `create_draft` | Cria rascunho a partir de Markdown e sobe as imagens locais. |
 | `update_draft` | Altera título, subtítulo, corpo, público ou seção. |
 | `duplicate_post` | Copia um post, com formatação, para um novo rascunho. |
-| `publish_post` | Publica agora ou agenda, com a checagem do editor na prévia. Exige confirmação. |
+| `publish_post` | Publica agora ou agenda, com a checagem do editor na prévia. Num post já publicado, leva as edições ao ar e pode enviá-lo por e-mail. Exige confirmação. |
 | `delete_draft` | Apaga um rascunho ou cancela um agendado. Exige confirmação. |
 | `upload_image` | Sobe uma imagem para o CDN do Substack. |
 | `get_publication` | Publicação, assinantes, visualizações, seções e outras publicações da conta. |
@@ -178,7 +178,7 @@ Um `# Título` no início do texto, igual ao título do post, é removido para n
 - A API é não oficial. Se o Substack mudar um endpoint, a ferramenta correspondente pode falhar até uma nova versão.
 - O login automático precisa de um navegador baseado em Chromium; sem ele, use `--cookie`.
 - Publicações com domínio próprio são acessadas pelo endereço `*.substack.com`, que é onde vale o cookie de sessão.
-- Editar um post já publicado altera a versão pendente; para ir ao ar, chame `publish_post` com `send_email: false`.
+- Editar um post já publicado altera a versão pendente; para ir ao ar, chame `publish_post` (com `send_email: true`, ele também é enviado por e-mail aos assinantes).
 - A contagem de assinantes não aparece para todas as contas.
 
 ## Desenvolvimento
