@@ -43,7 +43,5 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: node npm/build.mjs "$GITHUB_REF_NAME"
+      # Authenticates through npm trusted publishing (OIDC); no token is stored.
       - run: node npm/publish.mjs --provenance
-        env:
-          # Only needed until trusted publishing is set up on npmjs.com.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
