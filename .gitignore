@@ -1,0 +1,6 @@
+/substack-mcp
+/substack-mcp.exe
+/dist/
+credentials.json
+.env
+/npm/dist/
