@@ -70,7 +70,9 @@ On Windows, if `npx` is not found, use `"command": "cmd", "args": ["/c", "npx", 
 
 ## Tools
 
-`list_posts`, `get_post`, `create_draft`, `update_draft`, `duplicate_post`, `publish_post`, `delete_draft`, `upload_image`, `get_publication`, `create_note`, `list_scheduled_notes`, `delete_note`, `create_community_post`.
+`list_posts`, `get_post`, `create_draft`, `update_draft`, `duplicate_post`, `publish_post`, `delete_draft`, `upload_image`, `get_publication`, `list_tags`, `create_note`, `list_scheduled_notes`, `delete_note`, `create_community_post`.
+
+Tags: `create_draft` and `update_draft` take comma-separated `tags` and use the tags that already exist in your publication, even when case, accents or punctuation differ (`IA e Prompts` uses `ia-e-prompts`). The MCP never creates a tag on its own: if a name does not exist, nothing is applied and the agent gets your tag list so it can ask whether to use one of them or create the new one. A tag is only created with `create_tags: true`, after you agree. On `update_draft` the list replaces the post's tags, and `clear_tags: true` removes them all.
 
 Tools that reach readers or delete data (`publish_post`, `delete_draft`, `create_note`, `delete_note`, `create_community_post`) return a preview unless called with `confirm: true`, so the agent has to show you what will happen first. `send_email` defaults to `false`. Every tool takes an optional `publication` for accounts with several newsletters.
 

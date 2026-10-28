@@ -134,18 +134,21 @@ Com `npx`, prefixe com `npx -y @gabriellsales/substack-mcp`, por exemplo `npx -y
 | Ferramenta | O que faz |
 | --- | --- |
 | `list_posts` | Lista rascunhos, agendados ou publicados, com ids e links. |
-| `get_post` | Lê um post inteiro como Markdown. |
-| `create_draft` | Cria rascunho a partir de Markdown e sobe as imagens locais. |
-| `update_draft` | Altera título, subtítulo, corpo, público ou seção. |
-| `duplicate_post` | Copia um post, com formatação, para um novo rascunho. |
+| `get_post` | Lê um post inteiro como Markdown, com as tags. |
+| `create_draft` | Cria rascunho a partir de Markdown, sobe as imagens locais e aplica as tags. |
+| `update_draft` | Altera título, subtítulo, corpo, público, seção ou tags. |
+| `duplicate_post` | Copia um post, com formatação e tags, para um novo rascunho. |
 | `publish_post` | Publica agora ou agenda, com a checagem do editor na prévia. Num post já publicado, leva as edições ao ar e pode enviá-lo por e-mail. Exige confirmação. |
 | `delete_draft` | Apaga um rascunho ou cancela um agendado. Exige confirmação. |
 | `upload_image` | Sobe uma imagem para o CDN do Substack. |
 | `get_publication` | Publicação, assinantes, visualizações, seções e outras publicações da conta. |
+| `list_tags` | Lista as tags da publicação. |
 | `create_note` | Posta ou agenda uma Note. Exige confirmação. |
 | `list_scheduled_notes` | Lista Notes agendadas. |
 | `delete_note` | Cancela ou apaga uma Note. Exige confirmação. |
 | `create_community_post` | Abre conversa no chat de assinantes. Exige confirmação. |
+
+Tags: `create_draft` e `update_draft` recebem `tags` separadas por vírgula e usam as tags que já existem na sua publicação, mesmo com maiúsculas, acentos ou pontuação diferentes (`IA e Prompts` usa `ia-e-prompts`). O MCP nunca cria tag por conta própria: se algum nome não existe, nada é aplicado e o agente recebe a lista das suas tags para perguntar se você prefere usar uma delas ou criar a nova. A tag só é criada com `create_tags: true`, depois que você concordar. No `update_draft`, a lista substitui as tags do post, e `clear_tags: true` tira todas.
 
 Toda ferramenta aceita `publication` opcional (URL, domínio ou subdomínio) para quem tem mais de uma publicação.
 

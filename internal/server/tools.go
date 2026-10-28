@@ -33,6 +33,8 @@ type createDraftIn struct {
 	Subtitle    string `json:"subtitle,omitempty" jsonschema:"Optional subtitle, at most 280 characters."`
 	Audience    string `json:"audience,omitempty" jsonschema:"everyone (default), only_paid, founding or only_free. A paywall marker sets only_paid when this is empty."`
 	SectionID   int64  `json:"section_id,omitempty" jsonschema:"Optional section id from get_publication."`
+	Tags        string `json:"tags,omitempty" jsonschema:"Comma-separated tag names. Pick them from list_tags; a name matches an existing tag ignoring case, accents and punctuation. If any name has no match, no tag is applied and the answer lists the missing ones to ask the user about."`
+	CreateTags  bool   `json:"create_tags,omitempty" jsonschema:"true creates the tags that do not exist yet. Only set it after the user agreed to create those new tags."`
 	Publication string `json:"publication,omitempty" jsonschema:"Publication URL, host or subdomain. Optional; defaults to the configured or primary publication."`
 }
 
@@ -43,6 +45,9 @@ type updateDraftIn struct {
 	Content     string `json:"content,omitempty" jsonschema:"New body in Markdown; replaces the whole body. Omit to keep."`
 	Audience    string `json:"audience,omitempty" jsonschema:"everyone, only_paid, founding or only_free. Omit to keep."`
 	SectionID   int64  `json:"section_id,omitempty" jsonschema:"Section id from get_publication. Omit to keep."`
+	Tags        string `json:"tags,omitempty" jsonschema:"Comma-separated tag names; replaces the post's tags. Pick them from list_tags; a name matches an existing tag ignoring case, accents and punctuation. If any name has no match, the tags are left as they were and the answer lists the missing ones to ask the user about. Omit to keep."`
+	CreateTags  bool   `json:"create_tags,omitempty" jsonschema:"true creates the tags that do not exist yet. Only set it after the user agreed to create those new tags."`
+	ClearTags   bool   `json:"clear_tags,omitempty" jsonschema:"true removes every tag from the post. The tags stay in the publication."`
 	Publication string `json:"publication,omitempty" jsonschema:"Publication URL, host or subdomain. Optional; defaults to the configured or primary publication."`
 }
 
@@ -171,25 +176,25 @@ func (s *Server) register(ms *mcp.Server) {
 
 	mcp.AddTool(ms, &mcp.Tool{
 		Name:        "get_post",
-		Description: "Read one post or draft: title, subtitle, status, audience, links and the full body as Markdown.",
+		Description: "Read one post or draft: title, subtitle, status, audience, tags, links and the full body as Markdown.",
 		Annotations: ann("Read post", true, false, true),
 	}, s.getPost)
 
 	mcp.AddTool(ms, &mcp.Tool{
 		Name:        "create_draft",
-		Description: "Create a private draft from Markdown. Local image paths in the Markdown are uploaded to Substack. Returns the draft id and an editor link where the user can preview it. Does not publish.",
+		Description: "Create a private draft from Markdown. Local image paths in the Markdown are uploaded to Substack. Tags must already exist in the publication unless create_tags is set with the user's consent. Returns the draft id and an editor link where the user can preview it. Does not publish.",
 		Annotations: ann("Create draft", false, false, false),
 	}, s.createDraft)
 
 	mcp.AddTool(ms, &mcp.Tool{
 		Name:        "update_draft",
-		Description: "Change the title, subtitle, body, audience or section of a draft. Only the fields you pass change; content replaces the whole body. For an already published post this edits its pending version; publish_post makes the edit live.",
+		Description: "Change the title, subtitle, body, audience, section or tags of a draft. Only the fields you pass change; content replaces the whole body. For an already published post this edits its pending version; publish_post makes the edit live.",
 		Annotations: ann("Update draft", false, true, true),
 	}, s.updateDraft)
 
 	mcp.AddTool(ms, &mcp.Tool{
 		Name:        "duplicate_post",
-		Description: "Copy a post or draft, formatting included, into a new private draft.",
+		Description: "Copy a post or draft, formatting and tags included, into a new private draft.",
 		Annotations: ann("Duplicate post", false, false, false),
 	}, s.duplicatePost)
 
@@ -216,6 +221,12 @@ func (s *Server) register(ms *mcp.Server) {
 		Description: "Show the publication (name, URL, role, subscriber count, sections with ids) and the other publications on this account.",
 		Annotations: ann("Publication info", true, false, true),
 	}, s.getPublication)
+
+	mcp.AddTool(ms, &mcp.Tool{
+		Name:        "list_tags",
+		Description: "List the publication's post tags. Call it before tagging a post and choose the existing tags that fit it; propose a new tag only when none fits, and create it only if the user agrees.",
+		Annotations: ann("List tags", true, false, true),
+	}, s.listTags)
 
 	mcp.AddTool(ms, &mcp.Tool{
 		Name:        "create_note",
@@ -302,13 +313,18 @@ func (s *Server) getPost(ctx context.Context, _ *mcp.CallToolRequest, in postIn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("post %d has a body this server cannot read: %w", id, err)
 	}
+	tags, err := postTags(ctx, c, pub, id)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read the tags of post %d: %w", id, err)
+	}
 	md, cut := truncate(prosemirror.ToMarkdown(doc), 40000)
 	out := struct {
 		postSummary
-		WordCount int    `json:"word_count"`
-		Markdown  string `json:"markdown"`
-		Truncated bool   `json:"truncated,omitempty"`
-	}{summarize(pub, p), len(strings.Fields(prosemirror.PlainText(doc))), md, cut}
+		Tags      []string `json:"tags"`
+		WordCount int      `json:"word_count"`
+		Markdown  string   `json:"markdown"`
+		Truncated bool     `json:"truncated,omitempty"`
+	}{summarize(pub, p), tags, len(strings.Fields(prosemirror.PlainText(doc))), md, cut}
 	return nil, out, nil
 }
 
@@ -395,10 +411,21 @@ func (s *Server) createDraft(ctx context.Context, _ *mcp.CallToolRequest, in cre
 	}
 	out := struct {
 		postSummary
-		ImagesUploaded int  `json:"images_uploaded"`
-		Paywall        bool `json:"paywall"`
-	}{summarize(pub, p), res.Images, res.HasPaywall}
+		ImagesUploaded int        `json:"images_uploaded"`
+		Paywall        bool       `json:"paywall"`
+		Tags           *tagResult `json:"tags,omitempty"`
+		TagsError      string     `json:"tags_error,omitempty"`
+	}{postSummary: summarize(pub, p), ImagesUploaded: res.Images, Paywall: res.HasPaywall}
 	out.Title, out.Status = in.Title, "draft"
+	if names := splitTags(in.Tags); len(names) > 0 {
+		// The draft exists by now, so a tag failure is reported, not returned.
+		tr, err := setTags(ctx, c, pub, p.ID, names, in.CreateTags)
+		if err != nil {
+			out.TagsError = "The draft was created, but tagging failed: " + err.Error() + ". Retry with update_draft."
+		} else {
+			out.Tags = &tr
+		}
+	}
 	return nil, out, nil
 }
 
@@ -420,6 +447,11 @@ func (s *Server) updateDraft(ctx context.Context, _ *mcp.CallToolRequest, in upd
 	if err != nil {
 		return nil, nil, err
 	}
+	names := splitTags(in.Tags)
+	tagging := len(names) > 0 || in.ClearTags
+	if len(names) > 0 && in.ClearTags {
+		return nil, nil, fmt.Errorf("pass tags or clear_tags, not both")
+	}
 	upd := substack.DraftInput{Title: strings.TrimSpace(in.Title), Subtitle: in.Subtitle, Audience: in.Audience, SectionID: in.SectionID}
 	images := 0
 	if strings.TrimSpace(in.Content) != "" {
@@ -429,18 +461,28 @@ func (s *Server) updateDraft(ctx context.Context, _ *mcp.CallToolRequest, in upd
 		}
 		upd.Body, images = body, res.Images
 	}
-	p, err := c.UpdateDraft(ctx, pub, id, upd)
-	if err != nil {
-		return nil, nil, err
-	}
-	if p.ID == 0 {
-		p = cur
+	p := cur
+	if upd != (substack.DraftInput{}) || !tagging {
+		if p, err = c.UpdateDraft(ctx, pub, id, upd); err != nil {
+			return nil, nil, err
+		}
+		if p.ID == 0 {
+			p = cur
+		}
 	}
 	out := struct {
 		postSummary
-		ImagesUploaded int    `json:"images_uploaded"`
-		Note           string `json:"note,omitempty"`
+		ImagesUploaded int        `json:"images_uploaded"`
+		Tags           *tagResult `json:"tags,omitempty"`
+		Note           string     `json:"note,omitempty"`
 	}{postSummary: summarize(pub, p), ImagesUploaded: images}
+	if tagging {
+		tr, err := setTags(ctx, c, pub, id, names, in.CreateTags)
+		if err != nil {
+			return nil, nil, err
+		}
+		out.Tags = &tr
+	}
 	if cur.Status() == "published" {
 		out.Note = "This post is live. The edit is saved as pending; call publish_post to make it public (send_email=true also emails it to subscribers)."
 	}
@@ -476,8 +518,21 @@ func (s *Server) duplicatePost(ctx context.Context, _ *mcp.CallToolRequest, in d
 	if err != nil {
 		return nil, nil, err
 	}
-	out := summarize(pub, p)
+	out := struct {
+		postSummary
+		Tags      []string `json:"tags,omitempty"`
+		TagsError string   `json:"tags_error,omitempty"`
+	}{postSummary: summarize(pub, p)}
 	out.Title, out.Status = title, "draft"
+	if tags, err := postTags(ctx, c, pub, id); err != nil {
+		out.TagsError = "The copy was created without tags: " + err.Error()
+	} else if len(tags) > 0 {
+		if tr, err := setTags(ctx, c, pub, p.ID, tags, false); err != nil {
+			out.TagsError = "The copy was created, but copying the tags failed: " + err.Error()
+		} else {
+			out.Tags = tr.Tags
+		}
+	}
 	return nil, out, nil
 }
 

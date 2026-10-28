@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +24,8 @@ type fakeSubstack struct {
 	bodies    map[string]map[string]any
 	publishes []map[string]any
 	live      bool
+	tags      []substack.Tag
+	postTags  []string // tag ids on post 101
 }
 
 func (f *fakeSubstack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +47,9 @@ func (f *fakeSubstack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if f.serveTags(w, r) {
+		return
+	}
 	switch r.Method + " " + r.URL.Path {
 	case "GET /root/user/profile/self":
 		_, _ = w.Write([]byte(`{"id":7,"name":"Ana","handle":"ana","publicationUsers":[
@@ -65,6 +72,38 @@ func (f *fakeSubstack) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		_, _ = w.Write([]byte(`{"error":"no route"}`))
 	}
+}
+
+// serveTags answers the tag routes from the fake's state.
+func (f *fakeSubstack) serveTags(w http.ResponseWriter, r *http.Request) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	route := r.Method + " " + r.URL.Path
+	switch {
+	case route == "GET /pub/publication/post-tag":
+		_ = json.NewEncoder(w).Encode(f.tags)
+	case route == "POST /pub/publication/post-tag":
+		name := f.bodies[route]["name"].(string)
+		tag := substack.Tag{ID: "new-" + name, Name: name, Slug: strings.ToLower(name)}
+		f.tags = append(f.tags, tag)
+		_ = json.NewEncoder(w).Encode(tag)
+	case route == "GET /pub/post/101/tag":
+		links := []map[string]string{}
+		for _, id := range f.postTags {
+			links = append(links, map[string]string{"post_tag_id": id})
+		}
+		_ = json.NewEncoder(w).Encode(links)
+	case strings.HasPrefix(route, "POST /pub/post/101/tag/"):
+		f.postTags = append(f.postTags, strings.TrimPrefix(r.URL.Path, "/pub/post/101/tag/"))
+		_, _ = w.Write([]byte(`{}`))
+	case strings.HasPrefix(route, "DELETE /pub/post/101/tag/"):
+		id := strings.TrimPrefix(r.URL.Path, "/pub/post/101/tag/")
+		f.postTags = slices.DeleteFunc(f.postTags, func(t string) bool { return t == id })
+		_, _ = w.Write([]byte(`{}`))
+	default:
+		return false
+	}
+	return true
 }
 
 func connect(t *testing.T) (*mcp.ClientSession, *fakeSubstack) {
@@ -117,8 +156,8 @@ func TestSchemasPortable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Tools) != 13 {
-		t.Errorf("got %d tools, want 13", len(res.Tools))
+	if len(res.Tools) != 14 {
+		t.Errorf("got %d tools, want 14", len(res.Tools))
 	}
 	for _, tool := range res.Tools {
 		raw, _ := json.Marshal(tool.InputSchema)
@@ -254,5 +293,85 @@ func TestResendPublishedPost(t *testing.T) {
 	sends := fake.publishes
 	if len(sends) != 2 || sends[0]["send"] != false || sends[1]["only_send"] != true {
 		t.Errorf("want an update without email, then only_send; got %v", sends)
+	}
+}
+
+func TestTagsReuseExistingAndCreateMissing(t *testing.T) {
+	cs, fake := connect(t)
+	fake.tags = []substack.Tag{
+		{ID: "t1", Name: "ia-e-prompts", Slug: "ia-e-prompts"},
+		{ID: "t2", Name: "Produtividade", Slug: "produtividade"},
+	}
+	out, isErr := call(t, cs, "create_draft", map[string]any{
+		"title": "Hello", "content": "Some text.",
+		"tags": "IA e Prompts, produtividade, Linux, linux",
+	})
+	if isErr {
+		t.Fatal(out)
+	}
+	// Linux does not exist: nothing is tagged until the user agrees.
+	tags := out["tags"].(map[string]any)
+	if fmt.Sprint(tags["missing"]) != "[Linux]" || len(fake.postTags) != 0 || len(fake.tags) != 2 {
+		t.Fatalf("a missing tag must not be created or applied: %v, post %v", tags, fake.postTags)
+	}
+	if fmt.Sprint(tags["available"]) != "[ia-e-prompts Produtividade]" || tags["next"] == nil {
+		t.Errorf("the answer should offer the existing tags: %v", tags)
+	}
+
+	out, isErr = call(t, cs, "update_draft", map[string]any{
+		"post_id": "101", "tags": "IA e Prompts, produtividade, Linux, linux", "create_tags": true,
+	})
+	if isErr {
+		t.Fatal(out)
+	}
+	tags = out["tags"].(map[string]any)
+	if got := fmt.Sprint(tags["tags"]); got != "[ia-e-prompts Produtividade Linux]" {
+		t.Errorf("tags = %s", got)
+	}
+	if got := fmt.Sprint(tags["created"]); got != "[Linux]" {
+		t.Errorf("created = %s, want only Linux", got)
+	}
+	if len(fake.tags) != 3 || fmt.Sprint(fake.postTags) != "[t1 t2 new-Linux]" {
+		t.Errorf("tags %v, on post %v", fake.tags, fake.postTags)
+	}
+
+	// Tags alone are enough for an update, and they replace the old set.
+	out, isErr = call(t, cs, "update_draft", map[string]any{"post_id": "101", "tags": "Linux"})
+	if isErr {
+		t.Fatal(out)
+	}
+	if fmt.Sprint(fake.postTags) != "[new-Linux]" {
+		t.Errorf("post tags after replace = %v", fake.postTags)
+	}
+	if got := fmt.Sprint(out["tags"].(map[string]any)["removed"]); got != "[ia-e-prompts Produtividade]" {
+		t.Errorf("removed = %s", got)
+	}
+	if slices.Contains(fake.calls, "PUT /pub/drafts/101") {
+		t.Error("a tags-only update should not rewrite the draft")
+	}
+
+	out, _ = call(t, cs, "get_post", map[string]any{"post_id": "101"})
+	if got := fmt.Sprint(out["tags"]); got != "[Linux]" {
+		t.Errorf("get_post tags = %s", got)
+	}
+
+	call(t, cs, "update_draft", map[string]any{"post_id": "101", "clear_tags": true})
+	if len(fake.postTags) != 0 || len(fake.tags) != 3 {
+		t.Errorf("clear_tags left %v on the post, publication has %d tags", fake.postTags, len(fake.tags))
+	}
+}
+
+func TestTagKey(t *testing.T) {
+	for _, c := range [][2]string{
+		{"IA e Prompts", "ia-e-prompts"},
+		{"Programação", "programacao"},
+		{"  Build in Public ", "build-in-public"},
+	} {
+		if substack.TagKey(c[0]) != substack.TagKey(c[1]) {
+			t.Errorf("%q and %q should match", c[0], c[1])
+		}
+	}
+	if substack.TagKey("IA") == substack.TagKey("IAs") {
+		t.Error("different words must not match")
 	}
 }
